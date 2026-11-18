@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-jitter_imu_lidar_ros2.py — Jitter IMU e LiDAR via ROS2 (Unitree G1)
+main.py — IMU and LiDAR timing measurements via ROS 2 (Unitree G1)
 ====================================================================
 Mede jitter de:
   1. IMU   → extraído de /lowstate       (unitree_hg/LowState)
@@ -8,17 +8,17 @@ Mede jitter de:
 
 O ambiente ROS2 + workspace Unitree é carregado automaticamente.
 
-Uso:
-  python3 jitter_imu_lidar_ros2.py --duration 120 --output ~/data/jitter
+Usage:
+  python3 main.py --duration 120 --output ~/data/jitter
 
-  # Somente IMU
-  python3 jitter_imu_lidar_ros2.py --skip-lidar --duration 60
+  # IMU only
+  python3 main.py --skip-lidar --duration 60
 
-  # Ambos em paralelo
-  python3 jitter_imu_lidar_ros2.py --parallel
+  # Both sensors in parallel
+  python3 main.py --parallel
 
-  # Tópico LiDAR customizado
-  python3 jitter_imu_lidar_ros2.py --lidar-topic /utlidar/cloud_livox_mid360
+  # Custom LiDAR topic
+  python3 main.py --lidar-topic /utlidar/cloud_livox_mid360
 """
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -32,7 +32,7 @@ os.environ.setdefault('AMENT_PREFIX_PATH',
     '/home/u7/unitree_ros2/install/unitree_api:'
     '/opt/ros/jazzy')
 os.environ.setdefault('RMW_IMPLEMENTATION', 'rmw_cyclonedds_cpp')
-os.environ.setdefault('ROS_LOCALHOST_ONLY', '1')
+os.environ.setdefault('ROS_LOCALHOST_ONLY', '0')
 
 sys.path.insert(0, '/opt/ros/jazzy/lib/python3.12/site-packages')
 sys.path.insert(0, '/home/u7/unitree_ros2/install/unitree_hg/local/lib/python3.12/dist-packages')
@@ -166,7 +166,7 @@ def progress_loop(bufs_labels: list, duration: float,
 class ImuJitterNode(Node):
     """
     Extrai dados de IMU do tópico /lowstate (LowState da Unitree).
-    Mede jitter de chegada (wall-clock) e jitter de tick.
+    Measures callback inter-arrival intervals and differences in the robot tick counter.
     """
 
     def __init__(self, topic: str, buf: list, lock: threading.Lock,
@@ -202,8 +202,8 @@ class ImuJitterNode(Node):
             self._buf.append({
                 't_recv':     t_recv,
                 'tick':       tick,
-                'inter_recv': inter_recv,   # jitter wall-clock (transporte DDS)
-                'inter_tick': inter_tick,   # jitter declarado pelo robô (tick)
+                'inter_recv': inter_recv,   # interval between callback executions
+                'inter_tick': inter_tick,   # difference between consecutive robot ticks
                 'acc_x': acc[0], 'acc_y': acc[1], 'acc_z': acc[2],
                 'gyr_x': gyr[0], 'gyr_y': gyr[1], 'gyr_z': gyr[2],
                 'roll':  rpy[0], 'pitch': rpy[1], 'yaw':   rpy[2],
@@ -243,9 +243,9 @@ def run_imu(args):
         return
 
     print('  ─────────────────────────────────────────────────────────────')
-    print_stats('inter_recv  (jitter transporte ROS2/DDS)', stats([r['inter_recv'] for r in snap]))
+    print_stats('inter_recv  (callback inter-arrival interval)', stats([r['inter_recv'] for r in snap]))
     print()
-    print_stats('inter_tick  (jitter tick do robô, em ms→s)', stats([r['inter_tick'] for r in snap]))
+    print_stats('inter_tick  (robot tick increment)', stats([r['inter_tick'] for r in snap]))
     print()
 
     fields = ['t_recv', 'tick', 'inter_recv', 'inter_tick',
@@ -261,7 +261,7 @@ def run_imu(args):
 # ──────────────────────────────────────────────────────────────────────────────
 
 class LidarJitterNode(Node):
-    """Mede jitter de chegada e de cabeçalho de scans LiDAR (PointCloud2)."""
+    """Measures callback intervals and consecutive header timestamp differences for LiDAR scans."""
 
     def __init__(self, topic: str, buf: list, lock: threading.Lock,
                  stop_event: threading.Event):
@@ -337,9 +337,9 @@ def run_lidar(args):
     avg_pts = sum(pts) / len(pts) if pts else float('nan')
 
     print('  ─────────────────────────────────────────────────────────────')
-    print_stats('inter_recv   (jitter transporte ROS2/DDS)', stats([r['inter_recv']  for r in snap]))
+    print_stats('inter_recv   (callback inter-arrival interval)', stats([r['inter_recv']  for r in snap]))
     print()
-    print_stats('inter_stamp  (jitter timestamp do sensor)', stats([r['inter_stamp'] for r in snap]))
+    print_stats('inter_stamp  (header.stamp interval)', stats([r['inter_stamp'] for r in snap]))
     if not math.isnan(avg_pts):
         print(f'\n  Pontos por scan: média = {avg_pts:.0f}')
     print()
@@ -388,9 +388,9 @@ def run_parallel(args):
     with imu_lock:
         imu_snap = list(imu_buf)
     if imu_snap:
-        print_stats('inter_recv  (jitter transporte)', stats([r['inter_recv'] for r in imu_snap]))
+        print_stats('inter_recv  (callback inter-arrival interval)', stats([r['inter_recv'] for r in imu_snap]))
         print()
-        print_stats('inter_tick  (jitter tick robô)', stats([r['inter_tick'] for r in imu_snap]))
+        print_stats('inter_tick  (robot tick increment)', stats([r['inter_tick'] for r in imu_snap]))
         save_csv(os.path.join(args.output, 'imu_jitter.csv'),
                  ['t_recv', 'tick', 'inter_recv', 'inter_tick',
                   'acc_x', 'acc_y', 'acc_z', 'gyr_x', 'gyr_y', 'gyr_z',
@@ -404,9 +404,9 @@ def run_parallel(args):
     with lidar_lock:
         lidar_snap = list(lidar_buf)
     if lidar_snap:
-        print_stats('inter_recv  (jitter transporte)', stats([r['inter_recv']  for r in lidar_snap]))
+        print_stats('inter_recv  (callback inter-arrival interval)', stats([r['inter_recv']  for r in lidar_snap]))
         print()
-        print_stats('inter_stamp (jitter sensor)',     stats([r['inter_stamp'] for r in lidar_snap]))
+        print_stats('inter_stamp (header.stamp interval)', stats([r['inter_stamp'] for r in lidar_snap]))
         pts = [r['n_points'] for r in lidar_snap if r['n_points'] >= 0]
         if pts:
             print(f'\n  Pontos por scan: média = {sum(pts)/len(pts):.0f}')
