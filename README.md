@@ -1,209 +1,154 @@
 # ⚙️ jitterROS2g1
 
-## 📌 Overview
+ROS 2 timing measurements for the IMU and Livox Mid-360 point-cloud streams on the Unitree G1 EDU humanoid robot.
 
-`jitterROS2g1` is a ROS 2-based tool designed to measure and analyze **temporal jitter in robotic sensor streams** on the Unitree G1 EDU humanoid robot 🤖.
+The repository contains a Python subscriber that records callback execution times and source-provided timestamps, calculates interval statistics, and exports the measurements to CSV.
 
-It focuses on timing variability in two critical perception sources:
+## 📡 Topics and message types
 
-- 📡 IMU data from `/lowstate` (`unitree_hg/LowState`)
-- 🌐 LiDAR point clouds from `/utlidar/cloud_livox_mid360` (`sensor_msgs/PointCloud2`)
+| Sensor | ROS 2 topic | Message type |
+|---|---|---|
+| IMU | `/lowstate` | `unitree_hg/LowState` |
+| LiDAR | `/utlidar/cloud_livox_mid360` | `sensor_msgs/PointCloud2` |
 
-The tool provides detailed statistical analysis of:
+The LiDAR topic can be changed with `--lidar-topic`.
 
-- ⏱️ ROS 2 / DDS transport jitter (inter-arrival time)
-- 📊 Sensor timestamp drift
-- 🔁 End-to-end latency variability
+## 📊 Measurements
 
----
+### IMU
 
-## 🎯 Motivation
+- `inter_recv`: interval between consecutive subscriber callback execution timestamps, measured with `time.monotonic()`.
+- `inter_tick`: difference between consecutive robot `tick` counter values. The counter is expressed in milliseconds and converted to seconds for the reported statistics.
+- The CSV also stores accelerometer, gyroscope, orientation, and quaternion fields available in `LowState`.
 
-In humanoid robotics, **timing determinism is critical** for perception, control, and stability. However, ROS 2 introduces variability due to:
+### LiDAR
 
-- 🧩 DDS middleware scheduling behavior  
-- ⚙️ QoS policies (RELIABLE vs BEST_EFFORT)  
-- 🖥️ Operating system scheduling and CPU contention  
-- 📡 Sensor publishing frequency instability  
+- `inter_recv`: interval between consecutive subscriber callback execution timestamps, measured with `time.monotonic()`.
+- `inter_stamp`: difference between consecutive message `header.stamp` values.
+- `n_points`: point count calculated from the `PointCloud2` message layout fields.
 
-This project enables **reproducible real-hardware experiments** to quantify these effects on the Unitree G1 platform.
+The callback intervals describe when the application processes messages. They are not hardware-level packet arrival timestamps or one-way network latency measurements. Likewise, differences between `header.stamp` values do not measure absolute clock offset or clock drift.
 
----
+For each interval series, the program reports the sample count, minimum, maximum, mean, population standard deviation, p50, p95, and p99.
 
-## ✨ Features
+## ⚙️ QoS configuration
 
-- 📡 IMU jitter extraction from `/lowstate`
-- 🌐 LiDAR jitter analysis from Livox Mid-360
-- ⏱️ Inter-arrival time measurement (ROS 2 transport jitter)
-- 🧠 Sensor timestamp drift estimation
-- 📊 Statistical metrics (mean, std, p50, p95, p99)
-- ⚙️ QoS comparison (RELIABLE / BEST_EFFORT / VOLATILE)
-- 🔄 Parallel IMU + LiDAR acquisition mode
-- 💾 Automatic CSV export for offline analysis
+The current implementation uses fixed QoS profiles:
 
----
+| Stream | Reliability | Durability | History | Depth |
+|---|---|---|---|---:|
+| IMU (`/lowstate`) | RELIABLE | VOLATILE | KEEP_LAST | 1 |
+| LiDAR | BEST_EFFORT | VOLATILE | KEEP_LAST | 1 |
 
-## 🧠 Supported Sensors
+These are the profiles used by the subscribers; the program does not run a comparative QoS benchmark.
 
-### 📡 IMU (Unitree LowState)
-- Accelerometer
-- Gyroscope
-- Orientation (roll, pitch, yaw)
-- Quaternion
-- Internal robot tick
+## 🖥️ Requirements
 
-### 🌐 LiDAR (Livox Mid-360)
-- Point cloud (`PointCloud2`)
-- Timestamp-based scan analysis
-- Point density per scan
+The measurement computer must have:
 
----
+- Ubuntu with a compatible ROS 2 installation (the experimental environment used Ubuntu 24.04 and ROS 2 Jazzy).
+- Python compatible with that ROS 2 installation.
+- The `rmw_cyclonedds_cpp` RMW implementation.
+- The Unitree ROS 2 message packages, including `unitree_hg`.
+- Access to the G1 topics over the robot's Ethernet network.
 
-## 🖥️ System Requirements
+The G1 must be publishing the selected topics. The Unitree workspace must already be built and its message definitions must be available to Python.
 
-- 🐧 Ubuntu 22.04+
-- 🤖 ROS 2 (Jazzy recommended)
-- 🐍 Python 3.10+
-- 🧩 Unitree ROS 2 workspace (`unitree_ros2`)
-- 📡 Livox ROS driver (Mid-360 support)
+> **Workspace paths:** `main.py` contains default paths for the Unitree workspace under `/home/u7/unitree_ros2` and for ROS 2 Jazzy under `/opt/ros/jazzy`. If your installation uses different locations or a different ROS 2 distribution, adjust the paths in the environment setup section at the beginning of `main.py`.
 
----
+## 🚀 Installation and execution
 
-## ⚡ Installation
-
-### 1. Clone repository
+Clone the repository:
 
 ```bash
 git clone https://github.com/vitor-souza-ime/jitterROS2g1.git
 cd jitterROS2g1
-````
+```
 
-### 2. Source ROS 2
+Make sure ROS 2 and the Unitree message packages are available in the environment. For ROS 2 Jazzy:
 
 ```bash
 source /opt/ros/jazzy/setup.bash
 ```
 
-### 3. Build workspace
+For an external measurement computer, allow ROS 2 communication beyond the local host and select Cyclone DDS:
 
 ```bash
-colcon build
-source install/setup.bash
+export ROS_LOCALHOST_ONLY=0
+export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 ```
 
----
-
-## 🚀 Usage
-
-### 📡 IMU jitter analysis only
+Run the complete sequential measurement (IMU followed by LiDAR):
 
 ```bash
-python3 jitter_imu_lidar_ros2.py --duration 120 --skip-lidar --output ~/data/jitter
+python3 main.py --duration 120 --output ~/data/jitter
 ```
 
----
+The sequential mode runs the requested duration for each sensor, with a short pause between the IMU and LiDAR phases. Therefore, a duration of 120 seconds means approximately 120 seconds per sensor, not 120 seconds for the complete run.
 
-### 🌐 LiDAR jitter analysis only
+### Run one sensor only
+
+IMU:
 
 ```bash
-python3 jitter_imu_lidar_ros2.py --duration 120 --skip-imu --output ~/data/jitter
+python3 main.py --duration 120 --skip-lidar --output ~/data/jitter
 ```
 
----
-
-### 🔄 IMU + LiDAR (parallel mode)
+LiDAR:
 
 ```bash
-python3 jitter_imu_lidar_ros2.py --parallel --duration 120 --output ~/data/jitter
+python3 main.py --duration 120 --skip-imu --output ~/data/jitter
 ```
 
----
-
-### 🎯 Custom LiDAR topic
+### Run both sensors simultaneously
 
 ```bash
-python3 jitter_imu_lidar_ros2.py --lidar-topic /utlidar/cloud_livox_mid360
+python3 main.py --duration 120 --parallel --output ~/data/jitter
 ```
 
----
-
-## 📊 Metrics Computed
-
-### 📡 IMU
-
-* ⏱️ `inter_recv` → ROS 2 transport jitter
-* 🧠 `inter_tick` → robot internal tick jitter
-* 📈 Acceleration, angular velocity, orientation
-
-### 🌐 LiDAR
-
-* ⏱️ `inter_recv` → transport jitter
-* 📡 `inter_stamp` → sensor timestamp jitter
-* 📦 Number of points per scan
-
----
-
-## ⚙️ QoS Configuration
-
-The tool evaluates different ROS 2 QoS policies:
-
-* 🟥 **RELIABLE** → guaranteed delivery (higher latency)
-* 🟨 **BEST_EFFORT** → lower latency (possible packet loss)
-* 🟦 **VOLATILE** → no persistence
-
-Used to study **latency vs reliability trade-offs** in DDS.
-
----
-
-## 💾 Output
-
-Generated files:
-
-* `imu_jitter.csv`
-* `lidar_jitter.csv`
-
-Each record includes:
-
-* timestamps ⏱️
-* jitter values 📊
-* sensor measurements 📡
-* statistical data ready for analysis 🧠
-
----
-
-## 📁 Project Structure
+### Select a different LiDAR topic
 
 ```bash
+python3 main.py --duration 120 --skip-imu --lidar-topic /your/lidar/topic --output ~/data/jitter
+```
+
+## 💾 Output files
+
+The program creates the output directory when necessary and writes:
+
+- `imu_jitter.csv`
+- `lidar_jitter.csv`
+
+The CSV files contain the recorded timestamps, interval measurements, and sensor fields collected by the corresponding subscriber.
+
+## ⚠️ Scope of the measurements
+
+This tool characterizes timing intervals observed by ROS 2 subscriber callbacks and differences between consecutive source-provided timestamps. It does not independently measure:
+
+- One-way network latency or end-to-end sensor-to-application latency.
+- Absolute clock offset or drift between the robot and the measurement computer.
+- Packet loss at the Ethernet or DDS transport layers.
+- Comparative performance across different DDS middleware implementations or QoS profiles.
+- The effect of timing variations on SLAM trajectory accuracy, map quality, or locomotion.
+
+Those questions require additional instrumentation or experiments beyond the measurements implemented here.
+
+## 📁 Repository structure
+
+```text
 jitterROS2g1/
-├── jitter_imu_lidar_ros2.py   # main script
-├── README.md                  # documentation
-├── data/                      # output CSVs
-└── results/                   # analysis outputs
+├── main.py
+└── README.md
 ```
 
----
-
-## 📈 Applications
-
-* 🤖 Real-time robotics benchmarking
-* 📡 DDS / ROS 2 middleware evaluation
-* 🧠 Humanoid perception timing analysis
-* ⚙️ QoS impact studies
-* 🎓 Academic research in robotic systems
-
----
+CSV files are written to the directory supplied with `--output`.
 
 ## 📚 Citation
 
-If you use this project in research:
+If you use this software in academic work, please cite the associated study:
 
-```text
-Vitor Amadeu Souza, "Temporal Jitter Characterization in ROS 2 Middleware for Humanoid Robotics", 2026.
-```
-
----
+Vitor Amadeu Souza, “Temporal Jitter Characterization of IMU and LiDAR via ROS 2 on the Unitree G1 EDU Humanoid Robot: Implications for Sensor Fusion and Real-Time Control,” 2026.
 
 ## 📄 License
 
-MIT License (or define your project license)
-
+No license file is currently specified in this repository. Add a license file if you intend to grant permissions for reuse and redistribution.
